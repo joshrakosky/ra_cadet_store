@@ -2,80 +2,62 @@
 
 import { useRouter } from 'next/navigation'
 import { useState, useEffect } from 'react'
-import AdminExportButton from '@/components/AdminExportButton'
 import HelpIcon from '@/components/HelpIcon'
+import { isCadetProgram } from '@/lib/cadet-kits'
 
-type Program = 'RA' | 'LIFT'
+const inputClass =
+  'w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#c8102e] focus:border-transparent text-black bg-white'
 
 export default function ShippingPage() {
   const router = useRouter()
-  const [program, setProgram] = useState<Program | null>(null)
-  const CLASS_TYPE_OPTIONS = ['Corporate', 'Flight Attendant', 'General', 'LIFT', 'Maintenance', 'Pilot'] as const
-
   const [formData, setFormData] = useState({
     firstName: '',
     lastName: '',
     email: '',
-    classDate: '',
-    classType: ''
+    address: '',
+    address2: '',
+    city: '',
+    state: '',
+    zip: '',
   })
   const [error, setError] = useState('')
 
-  // Default shipping address (not editable)
-  const defaultShipping = {
-    name: 'Republic Airways Training Center',
-    attention: 'HR Shared Services',
-    address: '2 Brickyard Ln',
-    address2: '',
-    city: 'CARMEL',
-    state: 'IN',
-    zip: '46032',
-    country: 'USA'
-  }
-
   useEffect(() => {
-    // Check if user has completed previous steps
     const userCode = sessionStorage.getItem('userCode')
-    const selectedProgram = sessionStorage.getItem('selectedProgram') as Program | null
+    const selectedProgram = sessionStorage.getItem('selectedProgram')
     const tshirtSize = sessionStorage.getItem('tshirtSize')
-    const selectedKitId = sessionStorage.getItem('selectedKitId')
 
     if (!userCode) {
       router.push('/')
       return
     }
 
-    if (!selectedProgram || (selectedProgram !== 'RA' && selectedProgram !== 'LIFT')) {
+    if (!isCadetProgram(selectedProgram) || selectedProgram !== 'Standard') {
       router.push('/program')
       return
     }
 
     if (!tshirtSize) {
-      router.push('/tshirt-size')
+      router.push('/kit-details')
       return
     }
 
-    if (!selectedKitId) {
-      router.push('/kit-selection')
-      return
-    }
-
-    setProgram(selectedProgram)
-
-    // Pre-populate form if saved
     const savedShipping = sessionStorage.getItem('shipping')
     if (savedShipping) {
       try {
-        const parsedShipping = JSON.parse(savedShipping)
+        const parsed = JSON.parse(savedShipping)
         setFormData({
-          firstName: parsedShipping.firstName || '',
-          lastName: parsedShipping.lastName || '',
-          email: parsedShipping.email || '',
-          classDate: parsedShipping.classDate || '',
-          classType: parsedShipping.classType || ''
+          firstName: parsed.firstName || '',
+          lastName: parsed.lastName || '',
+          email: parsed.email || '',
+          address: parsed.address || '',
+          address2: parsed.address2 || '',
+          city: parsed.city || '',
+          state: parsed.state || '',
+          zip: parsed.zip || '',
         })
-      } catch (e) {
-        // If parsing fails, start fresh
+      } catch {
+        // Start fresh if saved shipping is invalid.
       }
     }
   }, [router])
@@ -84,14 +66,8 @@ export default function ShippingPage() {
     e.preventDefault()
     setError('')
 
-    // Validate required fields
-    if (!formData.firstName.trim()) {
-      setError('Please enter your first name')
-      return
-    }
-
-    if (!formData.lastName.trim()) {
-      setError('Please enter your last name')
+    if (!formData.firstName.trim() || !formData.lastName.trim()) {
+      setError('Please enter your first and last name')
       return
     }
 
@@ -100,39 +76,56 @@ export default function ShippingPage() {
       return
     }
 
-    if (!formData.classDate) {
-      setError('Please select your class date')
+    if (!formData.address.trim()) {
+      setError('Please enter your street address')
       return
     }
 
-    if (!formData.classType || !CLASS_TYPE_OPTIONS.includes(formData.classType as typeof CLASS_TYPE_OPTIONS[number])) {
-      setError('Please select your class type')
+    if (!formData.city.trim()) {
+      setError('Please enter your city')
       return
     }
 
-    // Store shipping information to sessionStorage (includes class date and class type)
+    if (!formData.state.trim()) {
+      setError('Please enter your state')
+      return
+    }
+
+    if (!formData.zip.trim()) {
+      setError('Please enter your ZIP code')
+      return
+    }
+
+    const firstName = formData.firstName.trim()
+    const lastName = formData.lastName.trim()
     const shippingInfo = {
-      ...formData,
-      ...defaultShipping
+      firstName,
+      lastName,
+      email: formData.email.trim(),
+      name: `${firstName} ${lastName}`,
+      address: formData.address.trim(),
+      attention: '',
+      address2: formData.address2.trim(),
+      city: formData.city.trim(),
+      state: formData.state.trim(),
+      zip: formData.zip.trim(),
+      country: 'USA',
     }
     sessionStorage.setItem('shipping', JSON.stringify(shippingInfo))
-    sessionStorage.setItem('orderEmail', formData.email.toLowerCase())
-    
-    // Navigate to review page
+    sessionStorage.setItem('orderEmail', formData.email.trim().toLowerCase())
     router.push('/review')
   }
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFormData({
       ...formData,
-      [e.target.name]: e.target.value
+      [e.target.name]: e.target.value,
     })
     setError('')
   }
 
   return (
     <div className="min-h-screen py-12 px-4 relative" style={{ backgroundColor: '#00263a' }}>
-      <AdminExportButton />
       <HelpIcon />
       <div className="max-w-2xl mx-auto">
         <div className="bg-white rounded-lg shadow-lg p-8">
@@ -147,10 +140,9 @@ export default function ShippingPage() {
           )}
 
           <form onSubmit={handleSubmit} className="space-y-6">
-            {/* Editable Fields */}
             <div className="space-y-4">
               <h2 className="text-xl font-semibold text-gray-900 border-b pb-2">Your Information</h2>
-              
+
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label htmlFor="firstName" className="block text-sm font-medium text-gray-700 mb-1">
@@ -163,7 +155,7 @@ export default function ShippingPage() {
                     value={formData.firstName}
                     onChange={handleChange}
                     required
-                    className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#c8102e] focus:border-transparent text-black bg-white"
+                    className={inputClass}
                   />
                 </div>
 
@@ -178,7 +170,7 @@ export default function ShippingPage() {
                     value={formData.lastName}
                     onChange={handleChange}
                     required
-                    className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#c8102e] focus:border-transparent text-black bg-white"
+                    className={inputClass}
                   />
                 </div>
               </div>
@@ -194,124 +186,89 @@ export default function ShippingPage() {
                   value={formData.email}
                   onChange={handleChange}
                   required
-                  className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#c8102e] focus:border-transparent text-black bg-white"
+                  className={inputClass}
                   placeholder="your.email@example.com"
                 />
               </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label htmlFor="classDate" className="block text-sm font-medium text-gray-700 mb-1">
-                    Class Date <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="date"
-                    id="classDate"
-                    name="classDate"
-                    value={formData.classDate}
-                    onChange={handleChange}
-                    required
-                    className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#c8102e] focus:border-transparent text-black bg-white"
-                  />
-                </div>
-
-                <div>
-                  <label htmlFor="classType" className="block text-sm font-medium text-gray-700 mb-1">
-                    Class Type <span className="text-red-500">*</span>
-                  </label>
-                  <select
-                    id="classType"
-                    name="classType"
-                    value={formData.classType}
-                    onChange={handleChange}
-                    required
-                    className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#c8102e] focus:border-transparent text-black bg-white"
-                  >
-                    <option value="">Select class type</option>
-                    {CLASS_TYPE_OPTIONS.map((opt) => (
-                      <option key={opt} value={opt}>{opt}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
             </div>
 
-            {/* Default Shipping Address (Read-only) */}
             <div className="space-y-4 pt-4 border-t">
               <h2 className="text-xl font-semibold text-gray-900 border-b pb-2">Shipping Address</h2>
-              <p className="text-sm text-gray-600 mb-4">All orders ship to the Republic Airways Training Center</p>
-              
+
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Name
+                <label htmlFor="address" className="block text-sm font-medium text-gray-700 mb-1">
+                  Street Address <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="text"
-                  value={defaultShipping.name}
-                  readOnly
-                  className="w-full px-4 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-600 cursor-not-allowed"
+                  id="address"
+                  name="address"
+                  value={formData.address}
+                  onChange={handleChange}
+                  required
+                  className={inputClass}
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Attention
+                <label htmlFor="address2" className="block text-sm font-medium text-gray-700 mb-1">
+                  Address 2
                 </label>
                 <input
                   type="text"
-                  value={defaultShipping.attention}
-                  readOnly
-                  className="w-full px-4 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-600 cursor-not-allowed"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Address <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={defaultShipping.address}
-                  readOnly
-                  className="w-full px-4 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-600 cursor-not-allowed"
+                  id="address2"
+                  name="address2"
+                  value={formData.address2}
+                  onChange={handleChange}
+                  className={inputClass}
+                  placeholder="Apt, suite, unit (optional)"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                  <label htmlFor="city" className="block text-sm font-medium text-gray-700 mb-1">
                     City <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="text"
-                    value={defaultShipping.city}
-                    readOnly
-                    className="w-full px-4 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-600 cursor-not-allowed"
+                    id="city"
+                    name="city"
+                    value={formData.city}
+                    onChange={handleChange}
+                    required
+                    className={inputClass}
                   />
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    State/Province <span className="text-red-500">*</span>
+                  <label htmlFor="state" className="block text-sm font-medium text-gray-700 mb-1">
+                    State <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="text"
-                    value={defaultShipping.state}
-                    readOnly
-                    className="w-full px-4 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-600 cursor-not-allowed"
+                    id="state"
+                    name="state"
+                    value={formData.state}
+                    onChange={handleChange}
+                    required
+                    className={inputClass}
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Postal Code <span className="text-red-500">*</span>
+                <label htmlFor="zip" className="block text-sm font-medium text-gray-700 mb-1">
+                  ZIP <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="text"
-                  value={defaultShipping.zip}
-                  readOnly
-                  className="w-full px-4 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-600 cursor-not-allowed"
+                  id="zip"
+                  name="zip"
+                  value={formData.zip}
+                  onChange={handleChange}
+                  required
+                  className={inputClass}
                 />
               </div>
             </div>
@@ -319,7 +276,7 @@ export default function ShippingPage() {
             <div className="mt-8 flex justify-between">
               <button
                 type="button"
-                onClick={() => router.push('/kit-selection')}
+                onClick={() => router.push('/kit-details')}
                 className="px-6 py-2 text-white rounded-md hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[#c8102e] focus:ring-offset-2 font-medium"
                 style={{ backgroundColor: '#c8102e' }}
               >
@@ -339,4 +296,3 @@ export default function ShippingPage() {
     </div>
   )
 }
-

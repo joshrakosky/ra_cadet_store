@@ -2,10 +2,8 @@
 
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
-import AdminExportButton from '@/components/AdminExportButton'
 import HelpIcon from '@/components/HelpIcon'
 import RALogo from '@/components/RALogo'
-import FlyingPlanes from '@/components/FlyingPlanes'
 import { supabase } from '@/lib/supabase'
 
 const ADMIN_CODE = 'ADMIN'
@@ -89,8 +87,6 @@ export default function LandingPage() {
 
   return (
     <div className="min-h-screen flex items-center justify-center px-4 relative" style={{ backgroundColor: '#00263a' }}>
-      <FlyingPlanes />
-      <AdminExportButton />
       <HelpIcon />
       <div className="max-w-md w-full bg-white rounded-lg shadow-lg p-8 relative z-10">
         <div className="text-center mb-8">
@@ -98,7 +94,7 @@ export default function LandingPage() {
             <RALogo className="max-w-[100px]" />
           </div>
           <h2 className="text-2xl font-semibold text-gray-700 mb-4">
-            New Hires
+            Cadet Kits
           </h2>
           <p className="text-gray-600">
             Enter your 6-letter access code to begin

@@ -2,7 +2,6 @@
 
 import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
-import AdminExportButton from '@/components/AdminExportButton'
 import HelpIcon from '@/components/HelpIcon'
 
 export default function ConfirmationPage() {
@@ -25,7 +24,6 @@ export default function ConfirmationPage() {
 
   return (
     <div className="min-h-screen flex items-center justify-center px-4 relative" style={{ backgroundColor: '#00263a' }}>
-      <AdminExportButton />
       <HelpIcon />
       <div className="max-w-md w-full bg-white rounded-lg shadow-lg p-8 text-center relative">
         {/* Close button */}
@@ -57,7 +55,7 @@ export default function ConfirmationPage() {
         </p>
 
         <a
-          href={`mailto:?subject=Republic Airways New Hires Order Confirmation - ${orderNumber}&body=Thank you for your order!%0D%0A%0D%0AYour Order Number: ${orderNumber}%0D%0A%0D%0AThank you`}
+          href={`mailto:?subject=Republic Airways Cadet Kits Order Confirmation - ${orderNumber}&body=Thank you for your order!%0D%0A%0D%0AYour Order Number: ${orderNumber}%0D%0A%0D%0AThank you`}
           onClick={() => {
             // Clear session after a short delay to allow mailto to open
             setTimeout(() => {

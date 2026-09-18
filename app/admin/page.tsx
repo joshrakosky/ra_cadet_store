@@ -7,11 +7,10 @@ import { fetchAllRows } from '@/lib/fetch-all-rows'
 import * as XLSX from 'xlsx'
 import { OrderWithItems } from '@/types'
 import {
-  buildComponentSkuByName,
-  buildKitCountRows,
-  buildProductCountRows,
-  type ReportingProduct
-} from '@/lib/sku-reporting'
+  buildCadetOrderDetailRows,
+  buildCadetProductCountRows,
+  cadetExportFilename,
+} from '@/lib/cadet-admin-export'
 import HelpIcon from '@/components/HelpIcon'
 
 /** PostgREST errors often have message/code on the prototype; `console.log(err)` can look like `{}`. */
@@ -75,8 +74,7 @@ export default function AdminPage() {
     email?: string
     first_name?: string
     last_name?: string
-    class_date?: string
-    class_type?: string
+    tshirt_size?: string
   } | null>(null)
   const [showBulkEdit, setShowBulkEdit] = useState(false)
   const [bulkAction, setBulkAction] = useState<'status' | 'cancel' | null>(null)
@@ -87,33 +85,9 @@ export default function AdminPage() {
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc')
   const [statusFilter, setStatusFilter] = useState<'all' | 'Pending' | 'Backorder' | 'Fulfillment' | 'Delivered'>('all')
   const [searchQuery, setSearchQuery] = useState('')
-  // Inventory modal: t-shirt rows by size + one row per kit component (from kit_items), not kit-level
-  const [showInventoryModal, setShowInventoryModal] = useState(false)
-  type InventoryRow = {
-    productId: string | null
-    componentName: string | null
-    name: string
-    size: string | null
-    sku: string | null
-    inventory: number
-    reorder_point: number | null
-    category: 'tshirt' | 'component'
-  }
-  const [inventoryProducts, setInventoryProducts] = useState<InventoryRow[]>([])
-  const [loadingInventory, setLoadingInventory] = useState(false)
-  const [editingInventoryCell, setEditingInventoryCell] = useState<{ productId: string | null; componentName: string | null; field: 'inventory' | 'reorder_point'; size: string | null } | null>(null)
-  const [inventoryEditDraft, setInventoryEditDraft] = useState<string>('')
-  const [savingInventoryCell, setSavingInventoryCell] = useState<string | null>(null)
-  const [inventorySearchQuery, setInventorySearchQuery] = useState('')
-  const [inventorySort, setInventorySort] = useState<{ col: 'name' | 'sku' | 'inventory' | 'reorder_point'; dir: 'asc' | 'desc' }>({ col: 'name', dir: 'asc' })
-  const [inventoryViewMode, setInventoryViewMode] = useState<'component' | 'kit'>('component')
-  type KitProduct = { id: string; name: string; program: string; customer_item_number: string | null; kit_items: Array<{ name: string }> | null }
-  const [inventoryKitProducts, setInventoryKitProducts] = useState<KitProduct[]>([])
-  const [showExportModal, setShowExportModal] = useState(false)
-  // Toggle when XML export should return to the Export modal.
-  const showXmlExport = false
-  const [showKitPendingConfirm, setShowKitPendingConfirm] = useState(false)
-  const [exportLoading, setExportLoading] = useState<'xml' | 'detailed' | 'distribution' | 'kit' | 'kitFulfillment' | 'kitPending' | null>(null)
+  const [exportLoading, setExportLoading] = useState(false)
+  // Shown when the admin clicks export: Yes updates Pending rows to Fulfillment after download.
+  const [showExportConfirm, setShowExportConfirm] = useState(false)
   // Code Assignments: who was assigned which code (upload CSV/Excel, searchable backup)
   const [showCodeAssignmentsModal, setShowCodeAssignmentsModal] = useState(false)
   type CodeAssignment = { id: string; email: string; name: string | null; code: string; created_at: string }
@@ -171,180 +145,9 @@ export default function AdminPage() {
     )
   }, [codeAssignments, assignmentSearchQuery])
 
-  const loadInventoryProducts = async () => {
-    try {
-      setLoadingInventory(true)
-      const { data: productsData, error: productsError } = await supabase
-        .from('ra_cadet_products')
-        .select('id, name, customer_item_number, inventory, inventory_by_size, reorder_point, category, kit_items, program')
-        .in('category', ['tshirt', 'kit'])
-        .order('name')
-      if (productsError) throw productsError
-
-      const componentNames = new Set<string>()
-      for (const p of productsData ?? []) {
-        if (p.category === 'kit' && p.kit_items && Array.isArray(p.kit_items)) {
-          for (const item of p.kit_items as Array<{ name: string }>) {
-            if (item?.name) componentNames.add(item.name)
-          }
-        }
-      }
-
-      const { data: componentData, error: componentError } = await supabase
-        .from('ra_cadet_component_inventory')
-        .select('component_name, inventory, reorder_point, sku')
-      if (componentError) throw componentError
-      const componentMap = new Map<string, { inventory: number; reorder_point: number | null; sku: string | null }>()
-      for (const row of componentData ?? []) {
-        componentMap.set(row.component_name, {
-          inventory: row.inventory ?? 0,
-          reorder_point: row.reorder_point ?? null,
-          sku: row.sku ?? null
-        })
-      }
-
-      const rows: InventoryRow[] = []
-      for (const p of productsData ?? []) {
-        if (p.category === 'tshirt' && p.inventory_by_size && typeof p.inventory_by_size === 'object') {
-          const bySize = p.inventory_by_size as Record<string, number>
-          const sizes = Object.keys(bySize).sort()
-          for (const size of sizes) {
-            rows.push({
-              productId: p.id,
-              componentName: null,
-              name: p.name,
-              size,
-              sku: p.customer_item_number ? `${p.customer_item_number}-${size}` : null,
-              inventory: bySize[size] ?? 0,
-              reorder_point: p.reorder_point ?? null,
-              category: 'tshirt'
-            })
-          }
-        }
-      }
-      for (const name of Array.from(componentNames).sort()) {
-        const data = componentMap.get(name) ?? { inventory: 0, reorder_point: null, sku: null }
-        rows.push({
-          productId: null,
-          componentName: name,
-          name,
-          size: null,
-          sku: data.sku ?? null,
-          inventory: data.inventory,
-          reorder_point: data.reorder_point,
-          category: 'component'
-        })
-      }
-      setInventoryProducts(rows)
-      // Store kit products for kit view (completable calculation)
-      const kitProducts = (productsData ?? [])
-        .filter((p: { category: string }) => p.category === 'kit')
-        .map((p: { id: string; name: string; program: string; customer_item_number: string | null; kit_items: unknown }) => ({
-          id: p.id,
-          name: p.name,
-          program: p.program,
-          customer_item_number: p.customer_item_number ?? null,
-          kit_items: Array.isArray(p.kit_items) ? (p.kit_items as Array<{ name: string }>) : null
-        }))
-      setInventoryKitProducts(kitProducts)
-    } catch (err: any) {
-      console.error('Failed to load inventory:', err)
-      setInventoryProducts([])
-      setInventoryKitProducts([])
-    } finally {
-      setLoadingInventory(false)
-    }
-  }
-
+  // Lock body scroll when Code Manager or Code Assignments is open
   useEffect(() => {
-    if (showInventoryModal) {
-      loadInventoryProducts()
-    }
-  }, [showInventoryModal])
-
-  const saveInventoryCell = async (row: InventoryRow, field: 'inventory' | 'reorder_point', value: string) => {
-    const match =
-      editingInventoryCell &&
-      editingInventoryCell.field === field &&
-      (row.componentName
-        ? editingInventoryCell.componentName === row.componentName
-        : editingInventoryCell.productId === row.productId && editingInventoryCell.size === row.size)
-    if (!match) return
-    const trimmed = value.trim()
-    const isNull = trimmed === '' || trimmed === '–'
-    const num = isNull ? null : parseInt(trimmed, 10)
-    if (!isNull && num !== null && (Number.isNaN(num) || num < -999999)) {
-      setEditingInventoryCell(null)
-      setInventoryEditDraft('')
-      return
-    }
-    const cellKey = row.componentName
-      ? `component-${row.componentName}-${field}`
-      : `${row.productId}-${row.size}-${field}`
-    setSavingInventoryCell(cellKey)
-    try {
-      if (row.componentName) {
-        const { error } = await supabase.from('ra_cadet_component_inventory').upsert(
-          {
-            component_name: row.componentName,
-            inventory: field === 'inventory' ? (num ?? 0) : row.inventory,
-            reorder_point: field === 'reorder_point' ? (isNull ? null : num) : row.reorder_point,
-            updated_at: new Date().toISOString()
-          },
-          { onConflict: 'component_name' }
-        )
-        if (error) throw error
-        if (field === 'inventory') {
-          setInventoryProducts(prev =>
-            prev.map(r => (r.componentName === row.componentName ? { ...r, inventory: num ?? 0 } : r))
-          )
-        } else {
-          setInventoryProducts(prev =>
-            prev.map(r => (r.componentName === row.componentName ? { ...r, reorder_point: isNull ? null : num! } : r))
-          )
-        }
-      } else if (row.productId && row.category === 'tshirt') {
-        if (field === 'reorder_point') {
-          const { error } = await supabase
-            .from('ra_cadet_products')
-            .update({ reorder_point: isNull ? null : num })
-            .eq('id', row.productId)
-          if (error) throw error
-          setInventoryProducts(prev =>
-            prev.map(r => (r.productId === row.productId ? { ...r, reorder_point: isNull ? null : num! } : r))
-          )
-        } else {
-          const { data: product, error: fetchErr } = await supabase
-            .from('ra_cadet_products')
-            .select('inventory_by_size')
-            .eq('id', row.productId)
-            .single()
-          if (fetchErr) throw fetchErr
-          const bySize = (product?.inventory_by_size as Record<string, number>) ?? {}
-          const newBySize = { ...bySize, [row.size!]: num ?? 0 }
-          const newInventory = Object.values(newBySize).reduce((a, b) => a + b, 0)
-          const { error } = await supabase
-            .from('ra_cadet_products')
-            .update({ inventory_by_size: newBySize, inventory: newInventory })
-            .eq('id', row.productId)
-          if (error) throw error
-          setInventoryProducts(prev =>
-            prev.map(r => (r.productId === row.productId && r.size === row.size ? { ...r, inventory: num ?? 0 } : r))
-          )
-        }
-      }
-    } catch (err: any) {
-      console.error('Failed to update inventory:', err)
-    } finally {
-      setSavingInventoryCell(null)
-      setEditingInventoryCell(null)
-      setInventoryEditDraft('')
-    }
-  }
-
-  // Lock body scroll when Code Manager, Inventory modal, Export modal, Code Assignments, or Kit Pending confirm is open
-  useEffect(() => {
-    if (showCodeManager || showInventoryModal || showExportModal || showCodeAssignmentsModal || showKitPendingConfirm) {
+    if (showCodeManager || showCodeAssignmentsModal) {
       document.body.style.overflow = 'hidden'
     } else {
       document.body.style.overflow = 'unset'
@@ -352,7 +155,7 @@ export default function AdminPage() {
     return () => {
       document.body.style.overflow = 'unset'
     }
-  }, [showCodeManager, showInventoryModal, showExportModal, showCodeAssignmentsModal, showKitPendingConfirm])
+  }, [showCodeManager, showCodeAssignmentsModal])
 
   const loadOrders = async () => {
     try {
@@ -459,6 +262,8 @@ export default function AdminPage() {
     const seen = new Set<string>()
     const list: { productId: string; size: string | null }[] = []
     for (const item of items) {
+      // Cadet kit lines can have a null product_id until catalog rows are fully seeded.
+      if (!item.product_id) continue
       const k = key(item.product_id, item.size || null)
       if (seen.has(k)) continue
       seen.add(k)
@@ -908,241 +713,43 @@ export default function AdminPage() {
     }
   }, [showCodeManager])
 
-  /** Export detailed orders (one row per item) to Excel. */
-  const exportDetailedOrders = async () => {
-    setShowExportModal(false)
-    setExportLoading('detailed')
+  // One admin export: Order Details + Product Counts (1 tee + 1 backpack + 1 pen + 1 lanyard per order).
+  // `updateToFulfillment` is the Yes path from the confirm popup — Pending orders become Fulfillment after download.
+  const exportCadetWorkbook = async (updateToFulfillment: boolean) => {
+    if (orders.length === 0) return
+    const pendingIds = orders
+      .filter((order) => (order.status || 'Pending') === 'Pending')
+      .map((order) => order.id)
+
+    setExportLoading(true)
     try {
-      const detailedData = orders.flatMap(order =>
-        order.items.map((item) => ({
-          'Order Number': order.order_number,
-          'Code': order.code,
-          'First Name': order.first_name,
-          'Last Name': order.last_name,
-          'Email': order.email,
-          'Class Date': order.class_date ? new Date(order.class_date).toLocaleDateString() : '',
-          'Class Type': order.class_type || '',
-          'Program': order.program,
-          'Status': order.status || 'Pending',
-          'Product Name': item.product_name,
-          'Customer Item #': item.customer_item_number || '',
-          'Color': item.color || '',
-          'Size': item.size || '',
-          'Shipping Name': order.shipping_name,
-          'Shipping Attention': order.shipping_attention || '',
-          'Shipping Address': order.shipping_address,
-          'Shipping Address 2': order.shipping_address2 || '',
-          'Shipping City': order.shipping_city,
-          'Shipping State': order.shipping_state,
-          'Shipping ZIP': order.shipping_zip,
-          'Shipping Country': order.shipping_country,
-          'Order Date': new Date(order.created_at).toLocaleDateString()
-        }))
-      )
       const wb = XLSX.utils.book_new()
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detailedData), 'Detailed Orders')
-      XLSX.writeFile(wb, `ra-new-hires-detailed-orders-${new Date().toISOString().split('T')[0]}.xlsx`)
-    } catch (err: any) {
-      console.error('Export error:', err)
-      alert('Failed to export. Please try again.')
-    } finally {
-      setExportLoading(null)
-    }
-  }
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(buildCadetOrderDetailRows(orders)), 'Order Details')
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(buildCadetProductCountRows(orders)), 'Product Counts')
+      XLSX.writeFile(wb, cadetExportFilename())
 
-  /** Export product usage: Kit Counts + Product Counts (canonical SKUs merge historical + new lines). */
-  const exportDistributionSummary = async () => {
-    setShowExportModal(false)
-    setExportLoading('distribution')
-    try {
-      const { data: productsData, error: productsError } = await supabase
-        .from('ra_cadet_products')
-        .select('id, category, customer_item_number, program')
-      if (productsError) throw productsError
-
-      const { data: componentRows, error: componentError } = await supabase
-        .from('ra_cadet_component_inventory')
-        .select('component_name, sku')
-      if (componentError) throw componentError
-
-      const productById = new Map<string, ReportingProduct>(
-        (productsData ?? []).map((p: { id: string; category: string; customer_item_number?: string | null; program?: string }) => [
-          p.id,
-          { id: p.id, category: p.category, customer_item_number: p.customer_item_number }
-        ])
-      )
-      const componentSkuByName = buildComponentSkuByName(componentRows ?? [])
-      const tshirtRow = (productsData ?? []).find(
-        (p: { category: string; program?: string }) => p.category === 'tshirt' && p.program === 'RA'
-      ) as { customer_item_number?: string | null } | undefined
-      const tshirtBaseSku = tshirtRow?.customer_item_number ?? null
-
-      const kitCountData = buildKitCountRows(orders, productById)
-      const productCountData = buildProductCountRows(orders, productById, componentSkuByName, tshirtBaseSku)
-
-      const wb = XLSX.utils.book_new()
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(kitCountData), 'Kit Counts')
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(productCountData), 'Product Counts')
-      XLSX.writeFile(wb, `ra-new-hires-product-usage-${new Date().toISOString().split('T')[0]}.xlsx`)
-    } catch (err: any) {
-      console.error('Export error:', err)
-      alert('Failed to export. Please try again.')
-    } finally {
-      setExportLoading(null)
-    }
-  }
-
-  /** Export orders as XML for Foremost Graphics fulfillment. */
-  const exportToXml = async () => {
-    setShowExportModal(false)
-    setExportLoading('xml')
-    try {
-      const res = await fetch('/api/fulfillment/orders')
-      if (!res.ok) throw new Error(res.statusText)
-      const xml = await res.text()
-      const blob = new Blob([xml], { type: 'application/xml' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `ra-new-hires-fulfillment-${new Date().toISOString().split('T')[0]}.xml`
-      a.click()
-      URL.revokeObjectURL(url)
-    } catch (err: any) {
-      console.error('XML export error:', err)
-      alert('Failed to export XML. Please try again.')
-    } finally {
-      setExportLoading(null)
-    }
-  }
-
-  /**
-   * Shared kit export: Kit Orders, Kit Counts, Product Counts (canonical SKUs).
-   * Pending and fulfillment-only kit exports include class date and class type on the Kit Orders sheet.
-   */
-  const exportKitOrdersWithFilter = async (
-    ordersToExport: OrderWithItems[],
-    filenameSuffix: string,
-    options?: { includeClassDateInKitSheet?: boolean }
-  ) => {
-    setShowExportModal(false)
-    try {
-      const { data: productsData, error: productsError } = await supabase
-        .from('ra_cadet_products')
-        .select('id, category, customer_item_number, program')
-      if (productsError) throw productsError
-
-      const { data: componentRows, error: componentError } = await supabase
-        .from('ra_cadet_component_inventory')
-        .select('component_name, sku')
-      if (componentError) throw componentError
-
-      const productMap = new Map<string, ReportingProduct>(
-        (productsData ?? []).map((p: { id: string; category: string; customer_item_number?: string | null }) => [
-          p.id,
-          { id: p.id, category: p.category, customer_item_number: p.customer_item_number }
-        ])
-      )
-      const componentSkuByName = buildComponentSkuByName(componentRows ?? [])
-      const tshirtRow = (productsData ?? []).find(
-        (p: { category: string; program?: string }) => p.category === 'tshirt' && p.program === 'RA'
-      ) as { customer_item_number?: string | null } | undefined
-      const tshirtBaseSku = tshirtRow?.customer_item_number ?? null
-      const includeClassDate = options?.includeClassDateInKitSheet === true
-
-      const kitData = ordersToExport.map((order) => {
-        let kitType = ''
-        for (const item of order.items) {
-          const product = item.product_id ? productMap.get(item.product_id) : null
-          if (product?.category === 'kit') {
-            kitType = product.customer_item_number ?? ''
-            break
-          }
+      if (updateToFulfillment && pendingIds.length > 0) {
+        const ID_CHUNK = 100
+        for (let i = 0; i < pendingIds.length; i += ID_CHUNK) {
+          const chunk = pendingIds.slice(i, i + ID_CHUNK)
+          const { error } = await supabase
+            .from('ra_cadet_orders')
+            .update({ status: 'Fulfillment' })
+            .in('id', chunk)
+          if (error) throw error
         }
-        const row: Record<string, string> = {
-          'Order Number': order.order_number,
-          'Name': [order.first_name || '', order.last_name || ''].filter(Boolean).join(' ') || '',
-          'Kit Type': kitType || 'N/A',
-          'T-Shirt Size': order.tshirt_size ?? 'N/A'
-        }
-        if (includeClassDate) {
-          row['Class Date'] = order.class_date ? new Date(order.class_date).toLocaleDateString() : ''
-          // Same training metadata as admin grid / full Excel export; helps kitting for pending + fulfillment batches.
-          row['Class Type'] = order.class_type ?? ''
-        }
-        return row
-      })
-
-      const kitCountData = buildKitCountRows(ordersToExport, productMap)
-      const productCountData = buildProductCountRows(ordersToExport, productMap, componentSkuByName, tshirtBaseSku)
-
-      const wb = XLSX.utils.book_new()
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(kitData), 'Kit Orders')
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(kitCountData), 'Kit Counts')
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(productCountData), 'Product Counts')
-      const date = new Date().toISOString().split('T')[0]
-      XLSX.writeFile(wb, `ra-new-hires-kit-orders${filenameSuffix ? `-${filenameSuffix}` : ''}-${date}.xlsx`)
-    } catch (err: any) {
-      console.error('Export error:', err)
-      alert('Failed to export. Please try again.')
-    } finally {
-      setExportLoading(null)
-    }
-  }
-
-  /** Export every order at kit level (all statuses) — file name has no status suffix. */
-  const exportKitOrdersAll = async () => {
-    setExportLoading('kit')
-    await exportKitOrdersWithFilter(orders, '')
-  }
-
-  /** Kit-level export for orders currently in Fulfillment status only. */
-  const exportKitOrdersFulfillmentOnly = async () => {
-    const fulfillmentOnly = orders.filter((o) => o.status === 'Fulfillment')
-    if (fulfillmentOnly.length === 0) {
-      alert('No orders with Fulfillment status to export.')
-      return
-    }
-    setExportLoading('kitFulfillment')
-    await exportKitOrdersWithFilter(fulfillmentOnly, 'fulfillment', { includeClassDateInKitSheet: true })
-  }
-
-  /** Open Kit Orders (pending) confirmation before export. */
-  const handleKitOrdersPendingClick = () => {
-    setShowExportModal(false)
-    setShowKitPendingConfirm(true)
-  }
-
-  /** Run Kit Orders (pending) export, optionally updating status to Fulfillment after download. */
-  const runKitOrdersPendingExport = async (updateStatusAfterDownload: boolean) => {
-    const pendingOrders = orders.filter((o) => (o.status || 'Pending') === 'Pending')
-    if (pendingOrders.length === 0) {
-      alert('No pending orders to export.')
-      setShowKitPendingConfirm(false)
-      return
-    }
-    try {
-      setExportLoading('kitPending')
-      await exportKitOrdersWithFilter(pendingOrders, 'pending', { includeClassDateInKitSheet: true })
-      if (updateStatusAfterDownload) {
-        const orderIds = pendingOrders.map((o) => o.id)
-        const { error } = await supabase
-          .from('ra_cadet_orders')
-          .update({ status: 'Fulfillment' })
-          .in('id', orderIds)
-        if (error) throw error
         await loadOrders()
-        alert(`Exported ${pendingOrders.length} order(s) and updated their status to Fulfillment.`)
       }
     } catch (err: any) {
-      console.error('Kit pending export error:', err)
-      alert(`Failed: ${err.message || 'Unknown error'}`)
+      console.error('Export error:', err)
+      alert('Failed to export. Please try again.')
     } finally {
-      setExportLoading(null)
-      setShowKitPendingConfirm(false)
+      setExportLoading(false)
+      setShowExportConfirm(false)
     }
   }
 
-  // Filter orders by status, then by search (order number, code, name, email, class type)
+  // Filter orders by status, then by search (order number, code, name, email, t-shirt size)
   const filteredByStatus = statusFilter === 'all'
     ? orders
     : orders.filter(order => (order.status || 'Pending') === statusFilter)
@@ -1154,15 +761,13 @@ export default function AdminPage() {
         const email = (order.email || '').toLowerCase()
         const orderNumber = (order.order_number || '').toLowerCase()
         const code = (order.code || '').toLowerCase()
-        const classType = (order.class_type || '').toLowerCase()
-        const classDate = order.class_date ? new Date(order.class_date).toLocaleDateString().toLowerCase() : ''
+        const tshirtSize = (order.tshirt_size || '').toLowerCase()
         return (
           name.includes(q) ||
           email.includes(q) ||
           orderNumber.includes(q) ||
           code.includes(q) ||
-          classType.includes(q) ||
-          classDate.includes(q)
+          tshirtSize.includes(q)
         )
       })
 
@@ -1179,12 +784,9 @@ export default function AdminPage() {
       // For name sorting, combine first and last name
       aValue = `${a.first_name} ${a.last_name}`.toLowerCase()
       bValue = `${b.first_name} ${b.last_name}`.toLowerCase()
-    } else if (sortColumn === 'class_date') {
-      aValue = a.class_date ? new Date(a.class_date).getTime() : 0
-      bValue = b.class_date ? new Date(b.class_date).getTime() : 0
-    } else if (sortColumn === 'class_type') {
-      aValue = (a.class_type || '').toLowerCase()
-      bValue = (b.class_type || '').toLowerCase()
+    } else if (sortColumn === 'tshirt_size') {
+      aValue = (a.tshirt_size || '').toLowerCase()
+      bValue = (b.tshirt_size || '').toLowerCase()
     } else if (typeof aValue === 'string') {
       aValue = aValue.toLowerCase()
       bValue = bValue.toLowerCase()
@@ -1315,7 +917,7 @@ export default function AdminPage() {
                       setCurrentPage(1)
                     }}
                     className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-[#c8102e] focus:border-transparent bg-white min-w-[180px]"
-                    title="Search by order #, code, name, email, class type, or class date"
+                    title="Search by order #, code, name, email, or t-shirt size"
                   />
                   <select
                     value={statusFilter}
@@ -1369,20 +971,6 @@ export default function AdminPage() {
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                     </svg>
                   </button>
-                  <button
-                    onClick={() => {
-                      setShowInventoryModal(!showInventoryModal)
-                      if (!showInventoryModal) setShowCodeManager(false)
-                    }}
-                    className="p-2 rounded-md bg-[#c8102e] text-white hover:bg-[#e63946] hover:scale-110 transition-all"
-                    title="Inventory"
-                  >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
-                      <path d="M12 2L2 7v10l10 5 10-5V7L12 2z" />
-                      <path d="M2 7l10 5 10-5" />
-                      <path d="M12 22V12" />
-                    </svg>
-                  </button>
                   {selectedOrders.size > 0 && (
                     <button
                       onClick={() => setShowBulkEdit(true)}
@@ -1395,10 +983,10 @@ export default function AdminPage() {
                     </button>
                   )}
                   <button
-                    onClick={() => setShowExportModal(true)}
-                    disabled={orders.length === 0 || exportLoading !== null}
+                    onClick={() => setShowExportConfirm(true)}
+                    disabled={orders.length === 0 || exportLoading}
                     className="p-2 rounded-md bg-[#c8102e] text-white hover:bg-[#e63946] hover:scale-110 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-[#c8102e] disabled:hover:scale-100 transition-all"
-                    title="Export orders"
+                    title="Export Excel: Order Details and Product Counts"
                   >
                     {exportLoading ? (
                       <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
@@ -1471,20 +1059,11 @@ export default function AdminPage() {
                     </th>
                     <th 
                       className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
-                      onClick={() => handleSort('class_type')}
+                      onClick={() => handleSort('tshirt_size')}
                     >
                       <div className="flex items-center justify-center">
-                        Class Type
-                        <SortIndicator column="class_type" />
-                      </div>
-                    </th>
-                    <th 
-                      className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
-                      onClick={() => handleSort('class_date')}
-                    >
-                      <div className="flex items-center justify-center">
-                        Class Date
-                        <SortIndicator column="class_date" />
+                        T-Shirt Size
+                        <SortIndicator column="tshirt_size" />
                       </div>
                     </th>
                     <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -1547,10 +1126,7 @@ export default function AdminPage() {
                         {order.first_name} {order.last_name}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 text-center">
-                        {order.class_type || '–'}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 text-center">
-                        {order.class_date ? new Date(order.class_date).toLocaleDateString() : '–'}
+                        {order.tshirt_size || '–'}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-center">
                         <div className="flex gap-2 justify-center">
@@ -1563,8 +1139,7 @@ export default function AdminPage() {
                               email: order.email,
                               first_name: order.first_name,
                               last_name: order.last_name,
-                              class_date: order.class_date,
-                              class_type: order.class_type
+                              tshirt_size: order.tshirt_size
                             })}
                             className="p-2 rounded-md bg-[#c8102e] text-white hover:bg-[#e63946] hover:scale-110 transition-all"
                             title="View products"
@@ -2213,306 +1788,6 @@ export default function AdminPage() {
         </div>
       )}
 
-      {/* Kit Inventory Modal */}
-      {showInventoryModal && (
-        <div
-          className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center z-50"
-          onClick={() => setShowInventoryModal(false)}
-        >
-          <div
-            className="bg-white rounded-lg shadow-xl p-6 max-w-4xl w-full mx-4 max-h-[85vh] flex flex-col"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center gap-4 border-b pb-4 mb-4 flex-shrink-0">
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={loadInventoryProducts}
-                  disabled={loadingInventory}
-                  className="p-2 rounded-md bg-[#c8102e] text-white hover:bg-[#e63946] hover:scale-110 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-[#c8102e] disabled:hover:scale-100 transition-all"
-                  title="Refresh"
-                >
-                  {loadingInventory ? (
-                    <svg className="w-5 h-5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                    </svg>
-                  ) : (
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                    </svg>
-                  )}
-                </button>
-                <input
-                  type="search"
-                  placeholder="Search inventory..."
-                  value={inventorySearchQuery}
-                  onChange={(e) => setInventorySearchQuery(e.target.value)}
-                  className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-[#c8102e] focus:border-transparent bg-white min-w-[180px]"
-                  title="Search by name or SKU"
-                />
-              </div>
-              <div className="flex items-center justify-center gap-3 flex-1">
-                <h2 className="text-xl font-bold text-gray-900">Inventory</h2>
-                {/* Toggle: Component view (individual products) vs Kit view (completable kits) */}
-                <div className="flex items-center rounded-lg border border-gray-300 overflow-hidden bg-gray-50" role="group" aria-label="Inventory view mode">
-                  <button
-                    type="button"
-                    onClick={() => setInventoryViewMode('component')}
-                    className={`px-3 py-1.5 text-sm font-medium transition-colors ${
-                      inventoryViewMode === 'component'
-                        ? 'bg-[#c8102e] text-white'
-                        : 'text-gray-600 hover:bg-gray-100'
-                    }`}
-                  >
-                    Components
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setInventoryViewMode('kit')}
-                    className={`px-3 py-1.5 text-sm font-medium transition-colors ${
-                      inventoryViewMode === 'kit'
-                        ? 'bg-[#c8102e] text-white'
-                        : 'text-gray-600 hover:bg-gray-100'
-                    }`}
-                  >
-                    Kits
-                  </button>
-                </div>
-              </div>
-              <div className="flex items-center gap-2 min-w-[80px] justify-end">
-                <button
-                  onClick={() => setShowInventoryModal(false)}
-                  className="text-gray-400 hover:text-gray-600 transition-colors p-1"
-                  aria-label="Close"
-                >
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-            </div>
-            <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-              {loadingInventory ? (
-                <div className="text-center py-8 text-gray-600">Loading...</div>
-              ) : inventoryViewMode === 'kit' ? (
-                /* Kit view: one row per kit with "Kits completable" = min(component inventories) */
-                (() => {
-                  const componentInvMap = new Map<string, number>()
-                  for (const row of inventoryProducts) {
-                    if (row.componentName) componentInvMap.set(row.componentName, row.inventory)
-                  }
-                  const kitRows = inventoryKitProducts.map(kit => {
-                    const items = kit.kit_items ?? []
-                    const inventories = items.map(it => componentInvMap.get(it.name) ?? 0)
-                    const completable = items.length > 0 ? Math.min(...inventories) : 0
-                    return { kit, completable, items, inventories }
-                  })
-                  const q = inventorySearchQuery.trim().toLowerCase()
-                  const filtered = !q ? kitRows : kitRows.filter(r =>
-                    (r.kit.name || '').toLowerCase().includes(q) || (r.kit.program || '').toLowerCase().includes(q)
-                  )
-                  return (
-                    <div className="overflow-x-auto overflow-y-auto flex-1 min-h-0">
-                      <table className="min-w-full divide-y divide-gray-200">
-                        <thead className="bg-gray-50 sticky top-0 z-10 shadow-sm">
-                          <tr>
-                            <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Kit Name</th>
-                            <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-32">Kits Completable</th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Components</th>
-                          </tr>
-                        </thead>
-                        <tbody className="bg-white divide-y divide-gray-200">
-                          {filtered.length === 0 ? (
-                            <tr>
-                              <td colSpan={3} className="px-6 py-8 text-center text-sm text-gray-600">
-                                {inventoryKitProducts.length === 0 ? 'No kits found.' : 'No matches for search.'}
-                              </td>
-                            </tr>
-                          ) : (
-                            filtered.map(({ kit, completable, items, inventories }) => (
-                              <tr key={kit.id}>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-center">{kit.name}</td>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm text-center font-medium tabular-nums w-32 text-gray-900" data-completable={completable}>
-                                  {String(completable ?? 0)}
-                                </td>
-                                <td className="px-6 py-4 text-sm text-gray-600">
-                                  <span title={items.map((it, i) => `${it.name}: ${inventories[i]}`).join(', ')}>
-                                    {items.map((it, i) => (
-                                      <span key={it.name}>
-                                        {it.name}({inventories[i]}){i < items.length - 1 ? ', ' : ''}
-                                      </span>
-                                    ))}
-                                  </span>
-                                </td>
-                              </tr>
-                            ))
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  )
-                })()
-              ) : (
-                <div className="overflow-x-auto overflow-y-auto flex-1 min-h-0">
-                  {(() => {
-                    const q = inventorySearchQuery.trim().toLowerCase()
-                    const filtered = !q ? inventoryProducts : inventoryProducts.filter(row =>
-                      (row.name || '').toLowerCase().includes(q) || (row.sku || '').toLowerCase().includes(q)
-                    )
-                    const toggleSort = (col: 'name' | 'sku' | 'inventory' | 'reorder_point') => {
-                      setInventorySort(prev => prev.col === col ? { col, dir: prev.dir === 'asc' ? 'desc' : 'asc' } : { col, dir: 'asc' })
-                    }
-                    const sorted = [...filtered].sort((a, b) => {
-                      const { col, dir } = inventorySort
-                      const mult = dir === 'asc' ? 1 : -1
-                      if (col === 'name') return mult * (a.name || '').localeCompare(b.name || '')
-                      if (col === 'sku') return mult * (a.sku || '').localeCompare(b.sku || '')
-                      if (col === 'inventory') return mult * (a.inventory - b.inventory)
-                      return mult * ((a.reorder_point ?? 0) - (b.reorder_point ?? 0))
-                    })
-                    const SortIndicator = ({ c }: { c: 'name' | 'sku' | 'inventory' | 'reorder_point' }) =>
-                      inventorySort.col === c ? <span className="ml-1">{inventorySort.dir === 'asc' ? '↑' : '↓'}</span> : null
-                    return (
-                  <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50 sticky top-0 z-10 shadow-sm">
-                      <tr>
-                        <th
-                          className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
-                          onClick={() => toggleSort('name')}
-                        >
-                          Name <SortIndicator c="name" />
-                        </th>
-                        <th
-                          className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
-                          onClick={() => toggleSort('sku')}
-                        >
-                          SKU <SortIndicator c="sku" />
-                        </th>
-                        <th
-                          className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
-                          onClick={() => toggleSort('inventory')}
-                        >
-                          Inventory <SortIndicator c="inventory" />
-                        </th>
-                        <th
-                          className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
-                          onClick={() => toggleSort('reorder_point')}
-                        >
-                          Reorder Point <SortIndicator c="reorder_point" />
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="bg-white divide-y divide-gray-200">
-                      {filtered.length === 0 ? (
-                        <tr>
-                          <td colSpan={4} className="px-6 py-8 text-center text-sm text-gray-600">
-                            {inventoryProducts.length === 0 ? 'No products found.' : 'No matches for search.'}
-                          </td>
-                        </tr>
-                      ) : (
-                        sorted.map((row) => {
-                          const rowKey = row.componentName ? `component-${row.componentName}` : `${row.productId}-${row.size}`
-                          const isEditingInventory =
-                            editingInventoryCell?.field === 'inventory' &&
-                            (row.componentName ? editingInventoryCell?.componentName === row.componentName : editingInventoryCell?.productId === row.productId && editingInventoryCell?.size === row.size)
-                          const isEditingReorder =
-                            editingInventoryCell?.field === 'reorder_point' &&
-                            (row.componentName ? editingInventoryCell?.componentName === row.componentName : editingInventoryCell?.productId === row.productId && editingInventoryCell?.size === row.size)
-                          const savingKey = row.componentName ? `component-${row.componentName}-inventory` : `${row.productId}-${row.size}-inventory`
-                          const savingReorderKey = row.componentName ? `component-${row.componentName}-reorder_point` : `${row.productId}-${row.size}-reorder_point`
-                          return (
-                            <tr key={rowKey}>
-                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-center">
-                                {row.name}
-                              </td>
-                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 font-mono text-center">
-                                {row.sku ?? '–'}
-                              </td>
-                              <td className="px-6 py-4 whitespace-nowrap text-sm text-center">
-                                {isEditingInventory ? (
-                                  <div className="flex items-center justify-center gap-1">
-                                    <input
-                                      type="number"
-                                      value={inventoryEditDraft}
-                                      onChange={(e) => setInventoryEditDraft(e.target.value)}
-                                      onBlur={() => saveInventoryCell(row, 'inventory', inventoryEditDraft)}
-                                      onKeyDown={(e) => {
-                                        if (e.key === 'Enter') saveInventoryCell(row, 'inventory', inventoryEditDraft)
-                                        if (e.key === 'Escape') {
-                                          setEditingInventoryCell(null)
-                                          setInventoryEditDraft('')
-                                        }
-                                      }}
-                                      className="w-20 px-2 py-1 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-[#c8102e] focus:border-transparent"
-                                      autoFocus
-                                    />
-                                    {savingInventoryCell === savingKey && (
-                                      <span className="text-xs text-gray-500">Saving…</span>
-                                    )}
-                                  </div>
-                                ) : (
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setEditingInventoryCell({ productId: row.productId, componentName: row.componentName, field: 'inventory', size: row.size })
-                                      setInventoryEditDraft(String(row.inventory))
-                                    }}
-                                    className="text-gray-900 hover:bg-gray-100 px-2 py-1 rounded"
-                                  >
-                                    {row.inventory}
-                                  </button>
-                                )}
-                              </td>
-                              <td className="px-6 py-4 whitespace-nowrap text-sm text-center">
-                                {isEditingReorder ? (
-                                  <div className="flex items-center justify-center gap-1">
-                                    <input
-                                      type="number"
-                                      value={inventoryEditDraft}
-                                      onChange={(e) => setInventoryEditDraft(e.target.value)}
-                                      onBlur={() => saveInventoryCell(row, 'reorder_point', inventoryEditDraft)}
-                                      onKeyDown={(e) => {
-                                        if (e.key === 'Enter') saveInventoryCell(row, 'reorder_point', inventoryEditDraft)
-                                        if (e.key === 'Escape') {
-                                          setEditingInventoryCell(null)
-                                          setInventoryEditDraft('')
-                                        }
-                                      }}
-                                      placeholder="–"
-                                      className="w-20 px-2 py-1 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-[#c8102e] focus:border-transparent"
-                                      autoFocus
-                                    />
-                                    {savingInventoryCell === savingReorderKey && (
-                                      <span className="text-xs text-gray-500">Saving…</span>
-                                    )}
-                                  </div>
-                                ) : (
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setEditingInventoryCell({ productId: row.productId, componentName: row.componentName, field: 'reorder_point', size: row.size })
-                                      setInventoryEditDraft(row.reorder_point != null ? String(row.reorder_point) : '')
-                                    }}
-                                    className="text-gray-900 hover:bg-gray-100 px-2 py-1 rounded"
-                                  >
-                                    {row.reorder_point != null ? row.reorder_point : '–'}
-                                  </button>
-                                )}
-                              </td>
-                            </tr>
-                          )
-                        })
-                      )}
-                    </tbody>
-                  </table>
-                    )
-                  })()}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Code Save Message Modal */}
       {codeMessage && (
         <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center z-50">
@@ -2554,107 +1829,41 @@ export default function AdminPage() {
         </div>
       )}
 
-      {/* Kit Orders Pending - Confirm before download */}
-      {showKitPendingConfirm && (
+      {/* Export confirm: Yes marks Pending orders as Fulfillment after the workbook downloads. */}
+      {showExportConfirm && (
         <div
           className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center z-50"
-          onClick={() => exportLoading === null && setShowKitPendingConfirm(false)}
+          onClick={() => !exportLoading && setShowExportConfirm(false)}
         >
           <div
             className="bg-white rounded-lg shadow-xl p-6 max-w-sm w-full mx-4"
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 className="text-xl font-bold text-gray-900 mb-4">Kit Orders (Pending)</h2>
+            <h2 className="text-xl font-bold text-gray-900 mb-4">Export Orders</h2>
             <p className="text-gray-600 mb-6">
               Do you want to update the status of these {orders.filter((o) => (o.status || 'Pending') === 'Pending').length} order(s) to Fulfillment after download?
             </p>
             <div className="flex gap-3">
               <button
-                onClick={() => runKitOrdersPendingExport(false)}
-                disabled={exportLoading !== null}
+                onClick={() => exportCadetWorkbook(false)}
+                disabled={exportLoading}
                 className="flex-1 px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                No, just download
+                No
               </button>
               <button
-                onClick={() => runKitOrdersPendingExport(true)}
-                disabled={exportLoading !== null}
+                onClick={() => exportCadetWorkbook(true)}
+                disabled={exportLoading}
                 className="flex-1 px-4 py-2 text-white rounded-md hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
                 style={{ backgroundColor: '#c8102e' }}
               >
-                Yes, update after download
+                Yes
               </button>
             </div>
             <button
-              onClick={() => setShowKitPendingConfirm(false)}
-              className="mt-4 w-full px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-md transition-colors"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Export Modal */}
-      {showExportModal && (
-        <div
-          className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center z-50"
-          onClick={() => setShowExportModal(false)}
-        >
-          <div
-            className="bg-white rounded-lg shadow-xl p-6 max-w-sm w-full mx-4"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 className="text-xl font-bold text-gray-900 mb-4">Export</h2>
-            <div className="space-y-2">
-              {showXmlExport && (
-                <button
-                  onClick={exportToXml}
-                  disabled={orders.length === 0}
-                  className="w-full px-4 py-3 text-left rounded-md bg-gray-100 hover:bg-gray-200 text-gray-900 font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  XML (Foremost fulfillment)
-                </button>
-              )}
-              <button
-                onClick={exportDistributionSummary}
-                disabled={orders.length === 0}
-                className="w-full px-4 py-3 text-left rounded-md bg-gray-100 hover:bg-gray-200 text-gray-900 font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Product Usage
-              </button>
-              <button
-                onClick={exportDetailedOrders}
-                disabled={orders.length === 0}
-                className="w-full px-4 py-3 text-left rounded-md bg-gray-100 hover:bg-gray-200 text-gray-900 font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Detailed Orders
-              </button>
-              <button
-                onClick={exportKitOrdersAll}
-                disabled={orders.length === 0}
-                className="w-full px-4 py-3 text-left rounded-md bg-gray-100 hover:bg-gray-200 text-gray-900 font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Kit Orders (All)
-              </button>
-              <button
-                onClick={exportKitOrdersFulfillmentOnly}
-                disabled={orders.filter((o) => o.status === 'Fulfillment').length === 0}
-                className="w-full px-4 py-3 text-left rounded-md bg-gray-100 hover:bg-gray-200 text-gray-900 font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Kit Orders (Fulfillment)
-              </button>
-              <button
-                onClick={handleKitOrdersPendingClick}
-                disabled={orders.filter((o) => (o.status || 'Pending') === 'Pending').length === 0}
-                className="w-full px-4 py-3 text-left rounded-md bg-gray-100 hover:bg-gray-200 text-gray-900 font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Kit Orders (Pending)
-              </button>
-            </div>
-            <button
-              onClick={() => setShowExportModal(false)}
-              className="mt-4 w-full px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-md transition-colors"
+              onClick={() => setShowExportConfirm(false)}
+              disabled={exportLoading}
+              className="mt-4 w-full px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Cancel
             </button>
@@ -2680,7 +1889,7 @@ export default function AdminPage() {
                 </svg>
               </button>
             </div>
-            {/* Contact and class info (code, name, email, class date, class type) */}
+            {/* Contact and kit info (code, name, email, t-shirt size) */}
             <div className="mb-4 p-4 bg-gray-50 rounded-lg space-y-1">
               {showProductsPopup.code != null && showProductsPopup.code !== '' && (
                 <p className="text-sm text-gray-900"><span className="font-medium">Code:</span> <span className="font-mono">{showProductsPopup.code}</span></p>
@@ -2691,18 +1900,17 @@ export default function AdminPage() {
               {showProductsPopup.email != null && showProductsPopup.email !== '' && (
                 <p className="text-sm text-gray-900"><span className="font-medium">Email:</span> {showProductsPopup.email}</p>
               )}
-              {showProductsPopup.class_date != null && showProductsPopup.class_date !== '' && (
-                <p className="text-sm text-gray-900"><span className="font-medium">Class Date:</span> {new Date(showProductsPopup.class_date).toLocaleDateString()}</p>
-              )}
-              {showProductsPopup.class_type != null && showProductsPopup.class_type !== '' && (
-                <p className="text-sm text-gray-900"><span className="font-medium">Class Type:</span> {showProductsPopup.class_type}</p>
+              {showProductsPopup.tshirt_size != null && showProductsPopup.tshirt_size !== '' && (
+                <p className="text-sm text-gray-900"><span className="font-medium">T-Shirt Size:</span> {showProductsPopup.tshirt_size}</p>
               )}
             </div>
-            <h3 className="text-sm font-semibold text-gray-900 mb-2">Products Ordered</h3>
+            <h3 className="text-sm font-semibold text-gray-900 mb-1">Products Ordered</h3>
+            <p className="text-xs text-gray-500 mb-2">Each order includes 1 t-shirt, 1 backpack, 1 lanyard, and 1 pen.</p>
             <div className="space-y-2">
               {showProductsPopup.items.map((item, idx) => (
                 <div key={idx} className="p-3 bg-gray-50 rounded-md">
                   <div className="font-medium text-gray-900">{item.product_name}</div>
+                  <div className="text-sm text-gray-600">Qty: 1</div>
                   {item.customer_item_number && (
                     <div className="text-sm text-gray-600">SKU: {item.customer_item_number}</div>
                   )}

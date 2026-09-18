@@ -2,81 +2,79 @@
 
 import { useRouter } from 'next/navigation'
 import { useState, useEffect } from 'react'
-import ProgramLogo from '@/components/ProgramLogo'
-import AdminExportButton from '@/components/AdminExportButton'
 import HelpIcon from '@/components/HelpIcon'
-
-type Program = 'RA' | 'LIFT'
+import { isCadetProgram, type CadetProgram } from '@/lib/cadet-kits'
 
 export default function ProgramSelectionPage() {
   const router = useRouter()
-  const [selectedProgram, setSelectedProgram] = useState<Program | null>(null)
+  const [selectedProgram, setSelectedProgram] = useState<CadetProgram | null>(null)
   const [error, setError] = useState('')
 
   useEffect(() => {
-    // Check if user has a valid code
     const userCode = sessionStorage.getItem('userCode')
     if (!userCode) {
       router.push('/')
       return
     }
-  }, [router])
 
-  const handleProgramSelect = (program: Program) => {
-    setSelectedProgram(program)
-    setError('')
-  }
+    const saved = sessionStorage.getItem('selectedProgram')
+    if (isCadetProgram(saved)) {
+      setSelectedProgram(saved)
+    }
+  }, [router])
 
   const handleContinue = () => {
     if (!selectedProgram) {
-      setError('Please select a program')
+      setError('Please select a kit type')
       return
     }
 
-    // Store selected program
     sessionStorage.setItem('selectedProgram', selectedProgram)
-
-    // Navigate to t-shirt size selection
-    router.push('/tshirt-size')
+    router.push('/kit-details')
   }
 
   return (
     <div className="min-h-screen flex items-center justify-center px-4 relative" style={{ backgroundColor: '#00263a' }}>
-      <AdminExportButton />
       <HelpIcon />
       <div className="max-w-4xl w-full">
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold text-white mb-2">
-            Select Your Program
+            Select Your Kit
           </h1>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-          {/* Republic Airways Option */}
           <button
-            onClick={() => handleProgramSelect('RA')}
-            className={`bg-white rounded-lg shadow-lg p-8 hover:shadow-xl transition-all ${
-              selectedProgram === 'RA' ? 'ring-4 ring-[#c8102e]' : ''
+            type="button"
+            onClick={() => {
+              setSelectedProgram('Standard')
+              setError('')
+            }}
+            className={`bg-white rounded-lg shadow-lg p-10 min-h-[220px] hover:shadow-xl transition-all ${
+              selectedProgram === 'Standard' ? 'ring-4 ring-[#c8102e]' : ''
             }`}
           >
-            <div className="flex flex-col items-center justify-center h-full">
-              <div className="mb-4">
-                <ProgramLogo program="RA" className="h-32" />
-              </div>
+            <div className="flex flex-col items-center justify-center h-full text-center">
+              <span className="text-3xl font-bold tracking-tight" style={{ color: '#00263a' }}>
+                Standard
+              </span>
             </div>
           </button>
 
-          {/* LIFT Academy Option */}
           <button
-            onClick={() => handleProgramSelect('LIFT')}
-            className={`bg-white rounded-lg shadow-lg p-8 hover:shadow-xl transition-all ${
-              selectedProgram === 'LIFT' ? 'ring-4 ring-[#c8102e]' : ''
+            type="button"
+            onClick={() => {
+              setSelectedProgram('Maintenance')
+              setError('')
+            }}
+            className={`bg-white rounded-lg shadow-lg p-10 min-h-[220px] hover:shadow-xl transition-all ${
+              selectedProgram === 'Maintenance' ? 'ring-4 ring-[#c8102e]' : ''
             }`}
           >
-            <div className="flex flex-col items-center justify-center h-full">
-              <div className="mb-4">
-                <ProgramLogo program="LIFT" className="h-32" />
-              </div>
+            <div className="flex flex-col items-center justify-center h-full text-center">
+              <span className="text-3xl font-bold tracking-tight" style={{ color: '#00263a' }}>
+                Maintenance
+              </span>
             </div>
           </button>
         </div>
@@ -95,16 +93,16 @@ export default function ProgramSelectionPage() {
             ← Back
           </button>
           <button
+            type="button"
             onClick={handleContinue}
             disabled={!selectedProgram}
             className="px-6 py-2 text-white rounded-md hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[#c8102e] focus:ring-offset-2 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
             style={{ backgroundColor: '#c8102e' }}
           >
-            Continue to T-Shirt Selection →
+            Continue to Kit Details →
           </button>
         </div>
       </div>
     </div>
   )
 }
-

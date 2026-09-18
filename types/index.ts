@@ -11,7 +11,7 @@ export interface Product {
   color_thumbnails?: Record<string, string> // Flexible color-to-thumbnail mapping (JSONB)
   specs?: string
   category: 'tshirt' | 'kit' // Product category
-  program: 'RA' | 'LIFT' // Which program this product belongs to
+  program: 'Standard' | 'Maintenance' | 'RA' | 'LIFT'
   requires_color: boolean
   requires_size: boolean
   available_colors?: string[]
@@ -20,7 +20,7 @@ export interface Product {
   deco?: string // Decoration information
   inventory: number // Overall product inventory count
   inventory_by_size?: Record<string, number> // Track inventory by size: {"XS": 10, "S": 20, ...}
-  /** Reorder threshold; when inventory falls at or below this value (used in admin Kit Inventory). */
+  /** Optional reorder threshold stored on product rows. */
   reorder_point?: number
   created_at: string
 }
@@ -32,7 +32,7 @@ export interface Order {
   first_name: string
   last_name: string
   order_number: string
-  program: 'RA' | 'LIFT' // Selected program
+  program: 'Standard' | 'Maintenance' | 'RA' | 'LIFT'
   tshirt_size?: string // Selected t-shirt size
   status: 'Pending' | 'Backorder' | 'Fulfillment' | 'Delivered' // Order status
   shipping_name: string
@@ -44,16 +44,12 @@ export interface Order {
   shipping_zip: string
   shipping_country: string
   created_at: string
-  /** User-selected class/training date (date picker) */
-  class_date?: string
-  /** Corporate | Flight Attendant | General | LIFT | Maintenance | Pilot */
-  class_type?: string
 }
 
 export interface OrderItem {
   id: string
   order_id: string
-  product_id: string
+  product_id: string | null
   product_name: string
   customer_item_number?: string // SKU for backend tracking
   color?: string

@@ -2,49 +2,42 @@
 
 import { useRouter } from 'next/navigation'
 import { useState, useEffect } from 'react'
-import { supabase } from '@/lib/supabase'
-import AdminExportButton from '@/components/AdminExportButton'
 import HelpIcon from '@/components/HelpIcon'
-
-type Program = 'RA' | 'LIFT'
+import {
+  STANDARD_KIT_ITEMS,
+  isCadetProgram,
+  isCadetTshirtSize,
+  type CadetProgram,
+  type CadetTshirtSize,
+} from '@/lib/cadet-kits'
 
 export default function ReviewPage() {
   const router = useRouter()
-  const [program, setProgram] = useState<Program | null>(null)
-  const [tshirtSize, setTshirtSize] = useState<string>('')
-  const [kitId, setKitId] = useState<string>('')
-  const [tshirtProduct, setTshirtProduct] = useState<any>(null)
-  const [kitProduct, setKitProduct] = useState<any>(null)
+  const [program, setProgram] = useState<CadetProgram | null>(null)
+  const [tshirtSize, setTshirtSize] = useState<CadetTshirtSize | ''>('')
   const [shipping, setShipping] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
 
   useEffect(() => {
-    // Check if user has completed all steps
     const userCode = sessionStorage.getItem('userCode')
-    const selectedProgram = sessionStorage.getItem('selectedProgram') as Program | null
+    const selectedProgram = sessionStorage.getItem('selectedProgram')
     const tshirtSizeData = sessionStorage.getItem('tshirtSize')
-    const selectedKitId = sessionStorage.getItem('selectedKitId')
     const shippingData = sessionStorage.getItem('shipping')
-    
+
     if (!userCode) {
       router.push('/')
       return
     }
 
-    if (!selectedProgram || (selectedProgram !== 'RA' && selectedProgram !== 'LIFT')) {
+    if (!isCadetProgram(selectedProgram) || selectedProgram !== 'Standard') {
       router.push('/program')
       return
     }
 
-    if (!tshirtSizeData) {
-      router.push('/tshirt-size')
-      return
-    }
-
-    if (!selectedKitId) {
-      router.push('/kit-selection')
+    if (!isCadetTshirtSize(tshirtSizeData)) {
+      router.push('/kit-details')
       return
     }
 
@@ -53,46 +46,11 @@ export default function ReviewPage() {
       return
     }
 
-    // Parse stored data
-    const parsedShipping = JSON.parse(shippingData)
-
     setProgram(selectedProgram)
     setTshirtSize(tshirtSizeData)
-    setKitId(selectedKitId)
-    setShipping(parsedShipping)
-
-    // Load product details
-    loadProducts(selectedProgram, selectedKitId)
+    setShipping(JSON.parse(shippingData))
+    setLoading(false)
   }, [router])
-
-  const loadProducts = async (programType: Program, kitIdData: string) => {
-    try {
-      // Load t-shirt product (always use 'RA' since t-shirts are consolidated)
-      const { data: tshirtData, error: tshirtError } = await supabase
-        .from('ra_cadet_products')
-        .select('*')
-        .eq('category', 'tshirt')
-        .eq('program', 'RA')
-        .single()
-
-      if (tshirtError) throw tshirtError
-      setTshirtProduct(tshirtData)
-
-      // Load kit product
-      const { data: kitData, error: kitError } = await supabase
-        .from('ra_cadet_products')
-        .select('*')
-        .eq('id', kitIdData)
-        .single()
-
-      if (kitError) throw kitError
-      setKitProduct(kitData)
-    } catch (err: any) {
-      setError(err.message || 'Failed to load product information')
-    } finally {
-      setLoading(false)
-    }
-  }
 
   const handleSubmit = async () => {
     setError('')
@@ -100,25 +58,18 @@ export default function ReviewPage() {
 
     try {
       const userCode = sessionStorage.getItem('userCode')!
-      const email = sessionStorage.getItem('orderEmail')!
 
-      // Submit order to API
       const response = await fetch('/api/orders', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           code: userCode,
           email: shipping.email,
           firstName: shipping.firstName,
           lastName: shipping.lastName,
-          program: program,
-          tshirtSize: tshirtSize,
-          kitId: kitId,
-          shipping: shipping,
-          classDate: shipping.classDate || null,
-          classType: shipping.classType || null
+          program,
+          tshirtSize,
+          shipping,
         }),
       })
 
@@ -128,17 +79,12 @@ export default function ReviewPage() {
       }
 
       const orderData = await response.json()
-      
-      // Store order number for confirmation page
       sessionStorage.setItem('orderNumber', orderData.order_number)
-      
-      // Clear selections
       sessionStorage.removeItem('selectedProgram')
       sessionStorage.removeItem('tshirtSize')
       sessionStorage.removeItem('selectedKitId')
       sessionStorage.removeItem('shipping')
       sessionStorage.removeItem('orderEmail')
-      
       router.push('/confirmation')
     } catch (err: any) {
       setError(err.message || 'Failed to submit order. Please try again.')
@@ -156,7 +102,6 @@ export default function ReviewPage() {
 
   return (
     <div className="min-h-screen py-12 px-4 relative" style={{ backgroundColor: '#00263a' }}>
-      <AdminExportButton />
       <HelpIcon />
       <div className="max-w-3xl mx-auto">
         <div className="bg-white rounded-lg shadow-lg p-8">
@@ -171,61 +116,39 @@ export default function ReviewPage() {
             </div>
           )}
 
-          {/* Program & T-Shirt Section */}
           <div className="mb-6 pb-6 border-b">
-            <h2 className="text-xl font-semibold text-gray-900 mb-4">Selected Items</h2>
-            <div className="space-y-4">
-              {/* T-Shirt */}
-              {tshirtProduct && (
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <p className="font-medium text-gray-900">{tshirtProduct.name}</p>
-                  <p className="text-sm text-gray-600">Size: {tshirtSize}</p>
-                </div>
-              )}
-
-              {/* Kit */}
-              {kitProduct && (
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <p className="font-medium text-gray-900">{kitProduct.name}</p>
-                  {kitProduct.description && (
-                    <p className="text-sm text-gray-600 mt-1">{kitProduct.description}</p>
+            <h2 className="text-xl font-semibold text-gray-900 mb-4">Standard Cadet Kit</h2>
+            <div className="space-y-3">
+              {STANDARD_KIT_ITEMS.map((item) => (
+                <div key={item.sku} className="bg-gray-50 rounded-lg p-4">
+                  <p className="font-medium text-gray-900">{item.name}</p>
+                  {item.sized && (
+                    <p className="text-sm text-gray-600">Size: {tshirtSize}</p>
                   )}
                 </div>
-              )}
+              ))}
             </div>
           </div>
 
-          {/* Your Information Section */}
           <div className="mb-6 pb-6 border-b">
             <h2 className="text-xl font-semibold text-gray-900 mb-4">Your Information</h2>
             <div className="bg-gray-50 rounded-lg p-4 space-y-1">
               <p className="font-medium text-gray-900">{shipping.firstName} {shipping.lastName}</p>
               <p className="text-sm text-gray-600">Email: {shipping.email}</p>
-              {shipping.classDate && (
-                <p className="text-sm text-gray-600">Class Date: {new Date(shipping.classDate).toLocaleDateString()}</p>
-              )}
-              {shipping.classType && (
-                <p className="text-sm text-gray-600">Class Type: {shipping.classType}</p>
-              )}
             </div>
           </div>
 
-          {/* Shipping Address Section */}
           <div className="mb-6 pb-6 border-b">
             <h2 className="text-xl font-semibold text-gray-900 mb-4">Shipping Address</h2>
-            <div className="bg-gray-50 rounded-lg p-4">
-              <p className="font-medium text-gray-900">{shipping.name}</p>
-              {shipping.attention && <p className="text-sm text-gray-600">Attn: {shipping.attention}</p>}
+            <div className="bg-gray-50 rounded-lg p-4 space-y-1">
               <p className="text-sm text-gray-600">{shipping.address}</p>
               {shipping.address2 && <p className="text-sm text-gray-600">{shipping.address2}</p>}
               <p className="text-sm text-gray-600">
                 {shipping.city}, {shipping.state} {shipping.zip}
               </p>
-              <p className="text-sm text-gray-600">{shipping.country}</p>
             </div>
           </div>
 
-          {/* Action Buttons */}
           <div className="mt-8 flex justify-between">
             <button
               type="button"
@@ -249,4 +172,3 @@ export default function ReviewPage() {
     </div>
   )
 }
-
