@@ -1,0 +1,135 @@
+@import "tailwindcss";
+
+:root {
+  --background: #00263a; /* Republic Airways Navy */
+  --foreground: #ffffff;
+  --ra-navy: #00263a;
+  --ra-red: #c8102e;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
+}
+
+/* Ensure all inputs have black text */
+input, select, textarea {
+  color: #000000 !important;
+}
+
+input::placeholder {
+  color: #9ca3af !important;
+}
+
+/* Flying Planes Animation - Bouncing with proper rotation, no collisions */
+/* Plane 1: Top-left to bottom-right diagonal, stays in upper-left quadrant */
+@keyframes flyBounce1 {
+  0% {
+    transform: translateX(-50px) translateY(5vh) rotate(45deg);
+  }
+  25% {
+    transform: translateX(15vw) translateY(12vh) rotate(50deg);
+  }
+  50% {
+    transform: translateX(30vw) translateY(20vh) rotate(55deg);
+  }
+  75% {
+    transform: translateX(45vw) translateY(28vh) rotate(50deg);
+  }
+  100% {
+    transform: translateX(120vw) translateY(35vh) rotate(45deg);
+  }
+}
+
+/* Plane 2: Right side, moving left, stays in middle-right area */
+@keyframes flyBounce2 {
+  0% {
+    transform: translateX(50px) translateY(40vh) rotate(180deg);
+  }
+  20% {
+    transform: translateX(-10vw) translateY(45vh) rotate(185deg);
+  }
+  40% {
+    transform: translateX(-25vw) translateY(50vh) rotate(180deg);
+  }
+  60% {
+    transform: translateX(-40vw) translateY(48vh) rotate(175deg);
+  }
+  80% {
+    transform: translateX(-60vw) translateY(52vh) rotate(180deg);
+  }
+  100% {
+    transform: translateX(-120vw) translateY(55vh) rotate(180deg);
+  }
+}
+
+/* Plane 3: Bottom-left, moving up-right, stays in lower-left quadrant */
+@keyframes flyBounce3 {
+  0% {
+    transform: translateX(-50px) translateY(-10vh) rotate(35deg);
+  }
+  20% {
+    transform: translateX(12vw) translateY(-18vh) rotate(40deg);
+  }
+  40% {
+    transform: translateX(25vw) translateY(-25vh) rotate(38deg);
+  }
+  60% {
+    transform: translateX(38vw) translateY(-32vh) rotate(42deg);
+  }
+  80% {
+    transform: translateX(50vw) translateY(-40vh) rotate(40deg);
+  }
+  100% {
+    transform: translateX(120vw) translateY(-50vh) rotate(35deg);
+  }
+}
+
+/* Plane 4: Top-right, moving left-down, stays in upper-right quadrant */
+@keyframes flyBounce4 {
+  0% {
+    transform: translateX(50px) translateY(8vh) rotate(225deg);
+  }
+  25% {
+    transform: translateX(-12vw) translateY(15vh) rotate(220deg);
+  }
+  50% {
+    transform: translateX(-28vw) translateY(22vh) rotate(225deg);
+  }
+  75% {
+    transform: translateX(-45vw) translateY(30vh) rotate(230deg);
+  }
+  100% {
+    transform: translateX(-120vw) translateY(38vh) rotate(225deg);
+  }
+}
+
+/* Plane 5: Bottom-right, moving left-up, stays in lower-right quadrant */
+@keyframes flyBounce5 {
+  0% {
+    transform: translateX(50px) translateY(-5vh) rotate(135deg);
+  }
+  22% {
+    transform: translateX(-15vw) translateY(-12vh) rotate(140deg);
+  }
+  44% {
+    transform: translateX(-32vw) translateY(-20vh) rotate(138deg);
+  }
+  66% {
+    transform: translateX(-50vw) translateY(-28vh) rotate(142deg);
+  }
+  88% {
+    transform: translateX(-70vw) translateY(-35vh) rotate(140deg);
+  }
+  100% {
+    transform: translateX(-120vw) translateY(-45vh) rotate(135deg);
+  }
+}
